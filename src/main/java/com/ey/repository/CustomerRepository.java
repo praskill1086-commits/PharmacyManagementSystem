@@ -11,6 +11,8 @@ import com.ey.entity.Customer;
 @Repository
 public interface CustomerRepository extends JpaRepository<Customer, Long> {
 	List<Customer> findByActiveTrue();
+	
+	boolean existsByPhone(String phone);
 
 
 }

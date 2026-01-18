@@ -1,12 +1,18 @@
 package com.ey.service.impl;
 
-import com.ey.dto.request.*;
-import com.ey.dto.response.*;
+import com.ey.config.CurrentUserUtil;
+import com.ey.dto.request.CreateUserRequest;
+import com.ey.dto.request.UpdateUserRequest;
+import com.ey.dto.response.UserResponse;
 import com.ey.entity.User;
+import com.ey.exception.UserOperationException;
 import com.ey.mapper.UserMapper;
 import com.ey.repository.UserRepository;
 import com.ey.service.UserService;
-import com.ey.config.CurrentUserUtil;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
@@ -16,60 +22,115 @@ import java.util.List;
 @Service
 public class UserServiceImpl implements UserService {
 
-    private final UserRepository userRepo;
-    private final PasswordEncoder encoder;
-    private final CurrentUserUtil currentUser;
+    private static final Logger logger =
+            LoggerFactory.getLogger(UserServiceImpl.class);
 
-    public UserServiceImpl(UserRepository userRepo, PasswordEncoder encoder, CurrentUserUtil currentUser) {
-        this.userRepo = userRepo;
-        this.encoder = encoder;
-        this.currentUser = currentUser;
-    }
+    @Autowired
+    private UserRepository userRepo;
+
+    @Autowired
+    private PasswordEncoder encoder;
+
+    @Autowired
+    private CurrentUserUtil currentUser;
 
     @Override
     public UserResponse create(CreateUserRequest request) {
-        User u = UserMapper.toEntity(request);
-        u.setPassword(encoder.encode(request.getPassword()));
-        u.setCreatedAt(LocalDateTime.now());
-        u.setUpdatedAt(LocalDateTime.now());
-        u.setUpdatedBy(currentUser.getCurrentUser());
-        return UserMapper.toResponse(userRepo.save(u));
+
+        if (userRepo.existsByUsername(request.getUsername())) {
+            logger.warn("Username already exists: {}", request.getUsername());
+            throw new UserOperationException("Username already exists");
+        }
+
+        if (userRepo.existsByEmail(request.getEmail())) {
+            logger.warn("Email already exists: {}", request.getEmail());
+            throw new UserOperationException("Email already exists");
+        }
+
+        User user = UserMapper.toEntity(request);
+        user.setPassword(encoder.encode(request.getPassword()));
+        user.setActive(true);
+        user.setCreatedAt(LocalDateTime.now());
+        user.setUpdatedAt(LocalDateTime.now());
+        user.setUpdatedBy(currentUser.getCurrentUser());
+
+        User saved = userRepo.save(user);
+        logger.info("User created with id {}", saved.getId());
+
+        return UserMapper.toResponse(saved);
     }
 
     @Override
     public List<UserResponse> getAll() {
-        return userRepo.findAll().stream().map(UserMapper::toResponse).toList();
+        logger.info("Fetching all users");
+        return userRepo.findAll()
+                .stream()
+                .map(UserMapper::toResponse)
+                .toList();
     }
 
     @Override
     public UserResponse getById(Long id) {
-        return UserMapper.toResponse(userRepo.findById(id).orElseThrow());
+        User user = userRepo.findById(id)
+                .orElseThrow(() -> new RuntimeException("User not found"));
+
+        return UserMapper.toResponse(user);
     }
 
     @Override
     public UserResponse update(Long id, UpdateUserRequest request) {
-        User u = userRepo.findById(id).orElseThrow();
-        u.setUsername(request.getUsername());
-        u.setEmail(request.getEmail());
-        u.setPhone(request.getPhone());
-        u.setRole(com.ey.enums.Role.valueOf(request.getRole()));
-        u.setActive(request.isActive());
-        u.setUpdatedAt(LocalDateTime.now());
-        u.setUpdatedBy(currentUser.getCurrentUser());
-        return UserMapper.toResponse(userRepo.save(u));
+
+        User user = userRepo.findById(id)
+                .orElseThrow(() -> new RuntimeException("User not found"));
+
+        user.setUsername(request.getUsername());
+        user.setEmail(request.getEmail());
+        user.setPhone(request.getPhone());
+        user.setRole(Enum.valueOf(
+                com.ey.enums.Role.class, request.getRole()));
+        user.setActive(request.isActive());
+        user.setUpdatedAt(LocalDateTime.now());
+        user.setUpdatedBy(currentUser.getCurrentUser());
+
+        User saved = userRepo.save(user);
+        logger.info("User updated with id {}", saved.getId());
+
+        return UserMapper.toResponse(saved);
     }
 
     @Override
     public void disable(Long id) {
-        User u = userRepo.findById(id).orElseThrow();
-        u.setActive(false);
-        userRepo.save(u);
+
+        User user = userRepo.findById(id)
+                .orElseThrow(() -> new RuntimeException("User not found"));
+
+        if (!user.isActive()) {
+            throw new RuntimeException("User already disabled");
+        }
+
+        user.setActive(false);
+        user.setUpdatedAt(LocalDateTime.now());
+        user.setUpdatedBy(currentUser.getCurrentUser());
+
+        userRepo.save(user);
+        logger.info("User disabled with id {}", id);
     }
 
     @Override
     public void enable(Long id) {
-        User u = userRepo.findById(id).orElseThrow();
-        u.setActive(true);
-        userRepo.save(u);
+
+        User user = userRepo.findById(id)
+                .orElseThrow(() -> new RuntimeException("User not found"));
+
+        if (user.isActive()) {
+            throw new RuntimeException("User already enabled");
+        }
+
+        user.setActive(true);
+        user.setUpdatedAt(LocalDateTime.now());
+        user.setUpdatedBy(currentUser.getCurrentUser());
+
+        userRepo.save(user);
+        logger.info("User enabled with id {}", id);
     }
 }

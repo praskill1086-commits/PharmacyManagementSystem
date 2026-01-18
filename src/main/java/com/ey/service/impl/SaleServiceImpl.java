@@ -2,9 +2,11 @@ package com.ey.service.impl;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
 import java.util.List;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import com.ey.config.CurrentUserUtil;
@@ -20,6 +22,7 @@ import com.ey.entity.SaleItem;
 import com.ey.entity.Wallet;
 import com.ey.entity.WalletTransaction;
 import com.ey.enums.WalletTransactionType;
+import com.ey.exception.SaleOperationException;
 import com.ey.repository.CustomerRepository;
 import com.ey.repository.MedicineRepository;
 import com.ey.repository.OfferRepository;
@@ -32,43 +35,56 @@ import com.ey.service.SaleService;
 @Service
 public class SaleServiceImpl implements SaleService {
 
-    private final MedicineRepository medicineRepo;
-    private final CustomerRepository customerRepo;
-    private final SaleRepository saleRepo;
-    private final SaleItemRepository saleItemRepo;
-    private final WalletRepository walletRepo;
-    private final WalletTransactionRepository walletTxnRepo;
-    private final OfferRepository offerRepo;
-    private final CurrentUserUtil currentUser;
+	private static final Logger logger =
+            LoggerFactory.getLogger(SaleServiceImpl.class);
 
-    public SaleServiceImpl(MedicineRepository medicineRepo,
-                           CustomerRepository customerRepo,
-                           SaleRepository saleRepo,
-                           SaleItemRepository saleItemRepo,
-                           WalletRepository walletRepo,
-                           WalletTransactionRepository walletTxnRepo,
-                           OfferRepository offerRepo,
-                           CurrentUserUtil currentUser) {
-        this.medicineRepo = medicineRepo;
-        this.customerRepo = customerRepo;
-        this.saleRepo = saleRepo;
-        this.saleItemRepo = saleItemRepo;
-        this.walletRepo = walletRepo;
-        this.walletTxnRepo = walletTxnRepo;
-        this.offerRepo = offerRepo;
-        this.currentUser = currentUser;
-    }
+    @Autowired
+    private MedicineRepository medicineRepo;
+
+    @Autowired
+    private CustomerRepository customerRepo;
+
+    @Autowired
+    private SaleRepository saleRepo;
+
+    @Autowired
+    private SaleItemRepository saleItemRepo;
+
+    @Autowired
+    private WalletRepository walletRepo;
+
+    @Autowired
+    private WalletTransactionRepository walletTxnRepo;
+
+    @Autowired
+    private OfferRepository offerRepo;
+
+    @Autowired
+    private CurrentUserUtil currentUser;
 
     @Override
     public SaleResponse createSale(CreateSaleRequest request) {
-        Customer customer = customerRepo.findById(request.getCustomerId()).orElseThrow();
+
+        logger.info("Starting sale for customer {}", request.getCustomerId());
+
+        Customer customer = customerRepo.findById(request.getCustomerId())
+                .orElseThrow(() -> new SaleOperationException("Customer not found"));
 
         double subtotal = 0;
-        List<SaleItem> saleItems = new ArrayList<>();
 
-        //Validate stock & calculate subtotal
+        // Validate stock & expiry
         for (SaleItemRequest item : request.getItems()) {
-            Medicine med = medicineRepo.findById(item.getMedicineId()).orElseThrow();
+
+            Medicine med = medicineRepo.findById(item.getMedicineId())
+                    .orElseThrow(() -> new RuntimeException("Medicine not found"));
+
+            if (!med.isActive()) {
+                throw new RuntimeException("Medicine disabled: " + med.getName());
+            }
+
+            if (med.getExpiryDate().isBefore(LocalDate.now())) {
+                throw new RuntimeException("Medicine expired: " + med.getName());
+            }
 
             if (med.getQuantity() < item.getQuantity()) {
                 throw new RuntimeException("Not enough stock for " + med.getName());
@@ -79,36 +95,43 @@ public class SaleServiceImpl implements SaleService {
 
         double discount = 0;
         double walletUsed = 0;
-        LocalDate today =LocalDate.now();
-        
+
         Offer offer = offerRepo
-        	    .findByActiveTrueAndStartDateLessThanEqualAndEndDateGreaterThanEqual(today, today)
-        	    .orElse(null);
+                .findByActiveTrueAndStartDateLessThanEqualAndEndDateGreaterThanEqual(
+                        LocalDate.now(), LocalDate.now())
+                .orElse(null);
 
-        	if (request.isUseWallet()) {
-        	    Wallet wallet = walletRepo.findByCustomerId(customer.getId()).orElseThrow();
-        	    walletUsed = Math.min(wallet.getBalance(), subtotal);
-        	    wallet.setBalance(wallet.getBalance() - walletUsed);
-        	    wallet.setUpdatedAt(LocalDateTime.now());
-        	    wallet.setUpdatedBy(currentUser.getCurrentUser());
-        	    walletRepo.save(wallet);
+        // Wallet OR Offer
+        if (request.isUseWallet()) {
 
-        	    WalletTransaction txn = new WalletTransaction();
-        	    txn.setWallet(wallet);
-        	    txn.setAmount(-walletUsed);
-        	    txn.setType(WalletTransactionType.REDEMPTION);
-        	    txn.setReason("Wallet redemption during sale");
-        	    txn.setDate(LocalDateTime.now());
-        	    walletTxnRepo.save(txn);
+            Wallet wallet = walletRepo.findByCustomerId(customer.getId())
+                    .orElseThrow(() -> new RuntimeException("Wallet not found"));
 
-        	} else if (offer != null) {
-        	    discount = subtotal * offer.getDiscountPercent() / 100;
-        	}
+            if (wallet.getBalance() <= 0) {
+                throw new RuntimeException("Wallet balance is zero");
+            }
 
+            walletUsed = Math.min(wallet.getBalance(), subtotal);
+            wallet.setBalance(wallet.getBalance() - walletUsed);
+            wallet.setUpdatedAt(LocalDateTime.now());
+            wallet.setUpdatedBy(currentUser.getCurrentUser());
+            walletRepo.save(wallet);
+
+            WalletTransaction txn = new WalletTransaction();
+            txn.setWallet(wallet);
+            txn.setAmount(-walletUsed);
+            txn.setType(WalletTransactionType.REDEMPTION);
+            txn.setReason("Wallet redemption during sale");
+            txn.setDate(LocalDateTime.now());
+            walletTxnRepo.save(txn);
+
+        } else if (offer != null) {
+            discount = subtotal * offer.getDiscountPercent() / 100;
+        }
 
         double finalAmount = subtotal - discount - walletUsed;
 
-        // 4️⃣ Create sale
+        // Create Sale
         Sale sale = new Sale();
         sale.setSaleDate(LocalDateTime.now());
         sale.setTotalAmount(finalAmount);
@@ -122,6 +145,7 @@ public class SaleServiceImpl implements SaleService {
 
         // Reduce stock & save sale items
         for (SaleItemRequest item : request.getItems()) {
+
             Medicine med = medicineRepo.findById(item.getMedicineId()).orElseThrow();
             med.setQuantity(med.getQuantity() - item.getQuantity());
             medicineRepo.save(med);
@@ -136,6 +160,7 @@ public class SaleServiceImpl implements SaleService {
 
         // Cashback (5%)
         double cashback = finalAmount * 0.05;
+
         Wallet wallet = walletRepo.findByCustomerId(customer.getId())
                 .orElseGet(() -> {
                     Wallet w = new Wallet();
@@ -148,19 +173,20 @@ public class SaleServiceImpl implements SaleService {
                 });
 
         wallet.setBalance(wallet.getBalance() + cashback);
-        walletRepo.save(wallet);
-
-        WalletTransaction txn = new WalletTransaction();
-        txn.setWallet(wallet);
-        txn.setAmount(cashback);
-        txn.setType(WalletTransactionType.CASHBACK);
-        txn.setReason("Cashback earned on sale");
-        txn.setDate(LocalDateTime.now());
         wallet.setUpdatedAt(LocalDateTime.now());
         wallet.setUpdatedBy(currentUser.getCurrentUser());
-        walletTxnRepo.save(txn);
+        walletRepo.save(wallet);
 
-        // 7Response
+        WalletTransaction cashbackTxn = new WalletTransaction();
+        cashbackTxn.setWallet(wallet);
+        cashbackTxn.setAmount(cashback);
+        cashbackTxn.setType(WalletTransactionType.CASHBACK);
+        cashbackTxn.setReason("Cashback earned on sale");
+        cashbackTxn.setDate(LocalDateTime.now());
+        walletTxnRepo.save(cashbackTxn);
+
+        logger.info("Sale completed with id {}", sale.getId());
+
         SaleResponse resp = new SaleResponse();
         resp.setSaleId(sale.getId());
         resp.setSubtotal(subtotal);

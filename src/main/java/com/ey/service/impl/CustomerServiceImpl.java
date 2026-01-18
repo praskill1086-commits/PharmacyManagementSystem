@@ -1,12 +1,18 @@
 package com.ey.service.impl;
 
 import com.ey.config.CurrentUserUtil;
-import com.ey.dto.request.*;
-import com.ey.dto.response.*;
+import com.ey.dto.request.CreateCustomerRequest;
+import com.ey.dto.request.UpdateCustomerRequest;
+import com.ey.dto.response.CustomerResponse;
 import com.ey.entity.Customer;
+import com.ey.exception.CustomerOperationException;
 import com.ey.mapper.CustomerMapper;
 import com.ey.repository.CustomerRepository;
 import com.ey.service.CustomerService;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
@@ -15,50 +21,85 @@ import java.util.List;
 @Service
 public class CustomerServiceImpl implements CustomerService {
 
-    private final CustomerRepository repo;
-    private final CurrentUserUtil currentUser;
+    private static final Logger logger =
+            LoggerFactory.getLogger(CustomerServiceImpl.class);
 
-    public CustomerServiceImpl(CustomerRepository repo, CurrentUserUtil currentUser) {
-        this.repo = repo;
-        this.currentUser = currentUser;
-    }
+    @Autowired
+    private CustomerRepository repo;
+
+    @Autowired
+    private CurrentUserUtil currentUser;
 
     @Override
     public CustomerResponse create(CreateCustomerRequest request) {
-        Customer c = CustomerMapper.toEntity(request);
-        c.setCreatedAt(LocalDateTime.now());
-        c.setUpdatedAt(LocalDateTime.now());
-        c.setUpdatedBy(currentUser.getCurrentUser());
-        return CustomerMapper.toResponse(repo.save(c));
+
+        if (repo.existsByPhone(request.getPhone())) {
+            logger.warn("Customer with phone already exists: {}", request.getPhone());
+            throw new CustomerOperationException("Customer with this phone already exists");
+        }
+
+        Customer customer = CustomerMapper.toEntity(request);
+        customer.setActive(true);
+        customer.setCreatedAt(LocalDateTime.now());
+        customer.setUpdatedAt(LocalDateTime.now());
+        customer.setUpdatedBy(currentUser.getCurrentUser());
+
+        Customer saved = repo.save(customer);
+        logger.info("Customer created with id {}", saved.getId());
+
+        return CustomerMapper.toResponse(saved);
     }
 
     @Override
     public List<CustomerResponse> getAll() {
-        return repo.findByActiveTrue().stream().map(CustomerMapper::toResponse).toList();
+        logger.info("Fetching all active customers");
+        return repo.findByActiveTrue()
+                .stream()
+                .map(CustomerMapper::toResponse)
+                .toList();
     }
 
     @Override
     public CustomerResponse getById(Long id) {
-        return CustomerMapper.toResponse(repo.findById(id).orElseThrow());
+        Customer customer = repo.findById(id)
+                .orElseThrow(() -> new RuntimeException("Customer not found"));
+
+        return CustomerMapper.toResponse(customer);
     }
 
     @Override
     public CustomerResponse update(Long id, UpdateCustomerRequest request) {
-        Customer c = repo.findById(id).orElseThrow();
-        c.setName(request.getName());
-        c.setPhone(request.getPhone());
-        c.setActive(request.isActive());
-        c.setUpdatedAt(LocalDateTime.now());
-        c.setUpdatedBy(currentUser.getCurrentUser());
-        return CustomerMapper.toResponse(repo.save(c));
+
+        Customer customer = repo.findById(id)
+                .orElseThrow(() -> new RuntimeException("Customer not found"));
+
+        customer.setName(request.getName());
+        customer.setPhone(request.getPhone());
+        customer.setActive(request.isActive());
+        customer.setUpdatedAt(LocalDateTime.now());
+        customer.setUpdatedBy(currentUser.getCurrentUser());
+
+        Customer saved = repo.save(customer);
+        logger.info("Customer updated with id {}", saved.getId());
+
+        return CustomerMapper.toResponse(saved);
     }
 
     @Override
     public void disable(Long id) {
-        Customer c = repo.findById(id).orElseThrow();
-        c.setActive(false);
-        c.setUpdatedAt(LocalDateTime.now());
-        c.setUpdatedBy(currentUser.getCurrentUser());
-        repo.save(c);
+
+        Customer customer = repo.findById(id)
+                .orElseThrow(() -> new RuntimeException("Customer not found"));
+
+        if (!customer.isActive()) {
+            throw new RuntimeException("Customer already disabled");
+        }
+
+        customer.setActive(false);
+        customer.setUpdatedAt(LocalDateTime.now());
+        customer.setUpdatedBy(currentUser.getCurrentUser());
+
+        repo.save(customer);
+        logger.info("Customer disabled with id {}", id);
     }
 }

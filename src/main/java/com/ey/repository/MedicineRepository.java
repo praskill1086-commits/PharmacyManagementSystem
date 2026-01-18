@@ -19,5 +19,8 @@ public interface MedicineRepository extends JpaRepository<Medicine, Long> {
 	List<Medicine> findByExpiryDateBetween(LocalDate start, LocalDate end);
 
 	List<Medicine> findByExpiryDateBefore(LocalDate date);
+	
+	boolean existsByNameAndBatchNumberAndActiveTrue(String name, String batchNumber);
+
 
 }

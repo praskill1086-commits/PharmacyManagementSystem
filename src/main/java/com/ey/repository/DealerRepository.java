@@ -11,6 +11,10 @@ import com.ey.entity.Dealer;
 @Repository
 public interface DealerRepository extends JpaRepository<Dealer, Long> {
 	List<Dealer> findByActiveTrue();
+	boolean existsByEmail(String email);
+	boolean existsByPhone(String phone);
+
+	boolean existsByNameAndActiveTrue(String name);
 
 
 }
