@@ -9,6 +9,20 @@ public class SaleItemRequest {
 
     @Positive
     private int quantity;
+    
+    
+    
+
+	public SaleItemRequest(@NotNull Long medicineId, @Positive int quantity) {
+		super();
+		this.medicineId = medicineId;
+		this.quantity = quantity;
+	}
+
+	public SaleItemRequest() {
+		super();
+		// TODO Auto-generated constructor stub
+	}
 
 	public Long getMedicineId() {
 		return medicineId;
