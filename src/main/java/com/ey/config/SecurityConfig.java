@@ -53,7 +53,7 @@ public class SecurityConfig {
                 .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .userDetailsService(userDetailsService)
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/auth/login", "/auth/forgot-password", "/auth/reset-password").permitAll()
+                        .requestMatchers("/auth/login", "/auth/forgot-password", "/auth/reset-password", "/auth/logout").permitAll()
                         .requestMatchers("/users/**").hasRole("ADMIN")
                         .requestMatchers("/customers/**").hasAnyRole("STAFF","ADMIN")
                         .requestMatchers("/sales/**").hasAnyRole("STAFF","ADMIN")
