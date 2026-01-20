@@ -72,6 +72,7 @@ public class CustomerServiceImpl implements CustomerService {
 
         Customer customer = repo.findById(id)
                 .orElseThrow(() -> new RuntimeException("Customer not found"));
+        
 
         customer.setName(request.getName());
         customer.setPhone(request.getPhone());

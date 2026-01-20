@@ -3,8 +3,11 @@ package com.ey.security;
 import java.io.IOException;
 
 import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.BadCredentialsException;
+import org.springframework.security.authentication.DisabledException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
+import org.springframework.security.core.AuthenticationException;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 
 import com.ey.dto.request.LoginRequest;
@@ -36,9 +39,11 @@ public class JwtAuthenticationFilter extends UsernamePasswordAuthenticationFilte
             return authManager.authenticate(
                     new UsernamePasswordAuthenticationToken(creds.getUsername(), creds.getPassword())
             );
-        } catch (Exception e) {
+        } catch (IOException e) {
             throw new RuntimeException(e);
+            
         }
+        
     }
 
     @Override
@@ -49,6 +54,34 @@ public class JwtAuthenticationFilter extends UsernamePasswordAuthenticationFilte
 
         response.setContentType("application/json");
         response.getWriter().write("{\"token\":\"" + token + "\"}");
+    }
+    
+    
+    @Override
+    protected void unsuccessfulAuthentication(
+            HttpServletRequest request,
+            HttpServletResponse response,
+            AuthenticationException failed) throws IOException {
+    	
+    	System.out.println("unsuccessfull call");
+
+        response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+        response.setContentType("application/json");
+
+        String message = "Invalid username or password";
+        if (failed instanceof BadCredentialsException) {
+            message = "Invalid Username or Password";
+        }
+        else  if (failed instanceof DisabledException) {
+            message = "User account is disabled";
+        }
+        else {
+        	message="Authentication Failed";
+        }
+
+        response.getWriter().write(
+                "{ \"error\": \"" + message + "\" }"
+        );
     }
 }
 
